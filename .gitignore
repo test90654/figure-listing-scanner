@@ -1,6 +1,6 @@
-﻿__pycache__/
-inventory.db
-img_cache/
+__pycache__/
+listing.db
 credentials.json
 .env
+.venv/
 *.csv

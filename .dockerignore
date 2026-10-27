@@ -4,6 +4,6 @@ __pycache__
 *.pyd
 .git
 .gitignore
-inventory.db
-img_cache/
+.venv
+listing.db
 credentials.json

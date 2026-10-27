@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>出品名スキャナー</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #fff; padding: 10px; margin: 0; }
+        .wrap { max-width: 420px; margin: 0 auto; }
+        h2 { font-size: 18px; margin: 4px 0 2px; text-align: center; }
+        p.sub { color: #aaa; font-size: 12px; margin: 0 0 12px; text-align: center; }
+        .btn-toggle { background: #00ffcc; color: #000; font-weight: bold; border: none; padding: 14px 20px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; margin-bottom: 10px; }
+        #reader-container { background: #000; border-radius: 10px; overflow: hidden; border: 2px solid #00ffcc; display: none; margin-bottom: 10px; }
+        .row { display: flex; gap: 6px; }
+        .box { background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #444; margin-bottom: 12px; }
+        input, select, textarea { background: #2a2a2a; color: #fff; border: 1px solid #555; padding: 8px 10px; border-radius: 6px; font-size: 14px; font-family: inherit; box-sizing: border-box; }
+        input { flex-grow: 1; min-width: 0; }
+        textarea { width: 100%; resize: vertical; line-height: 1.4; }
+        button { cursor: pointer; font-family: inherit; }
+        .btn { background: #3498db; color: #fff; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 13px; white-space: nowrap; }
+        .btn.copy { background: #28a745; }
+        .btn.copy.done { background: #555; }
+        .btn.sub { background: #333; border: 1px solid #666; }
+        .msg { color: #ff6b6b; font-weight: bold; font-size: 13px; min-height: 18px; margin: 4px 0 8px; }
+        .msg.ok { color: #7ee2a8; }
+        label { display: block; color: #aaa; font-size: 12px; margin: 10px 0 4px; }
+        .label-row { display: flex; justify-content: space-between; align-items: flex-end; }
+        .count { color: #888; font-size: 11px; }
+        .count.over { color: #ff6b6b; font-weight: bold; }
+        .head { display: flex; gap: 10px; align-items: center; }
+        .thumb { width: 64px; height: 64px; object-fit: contain; background: #fff; border-radius: 6px; flex-shrink: 0; }
+        .jan { color: #888; font-size: 12px; }
+        .brand { display: inline-block; background: #8e44ad; color: #fff; font-size: 11px; border-radius: 3px; padding: 1px 6px; margin-top: 4px; }
+        .actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+        details summary { cursor: pointer; color: #9fd0ff; font-size: 13px; }
+        .term { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; padding: 6px 0; border-bottom: 1px solid #2c2c2c; }
+        .term button { background: #cc3333; color: #fff; border: none; border-radius: 4px; font-size: 11px; padding: 2px 6px; }
+        .history-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #2c2c2c; font-size: 12px; cursor: pointer; }
+        .history-row .t { flex-grow: 1; min-width: 0; overflow-wrap: anywhere; }
+        .history-row .t small { color: #888; display: block; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h2>出品名スキャナー</h2>
+    <p class="sub">バーコードを読むと、商品名を翻訳して出品タイトルを作ります</p>
+
+    <button class="btn-toggle" id="scan-toggle-btn" onclick="toggleScanner()">📷 カメラを起動する</button>
+    <div id="reader-container"><div id="interactive"></div></div>
+
+    <div class="box">
+        <div class="row">
+            <input id="jan-input" type="text" inputmode="numeric" placeholder="JANを手入力（13桁）"
+                   onkeydown="if (event.key === 'Enter') submitJan()">
+            <button class="btn" onclick="submitJan()">照合</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+            <select id="target-select" onchange="changeTarget()" style="flex-grow:1"></select>
+        </div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+
+    <div class="box" id="result" style="display:none">
+        <div class="head">
+            <img id="r-image" class="thumb" alt="" onerror="this.style.display='none'">
+            <div>
+                <div class="jan">JAN: <span id="r-jan"></span></div>
+                <span class="brand" id="r-brand" style="display:none"></span>
+            </div>
+        </div>
+
+        <label>日本語の商品名（直してから「翻訳」を押すと訳し直します）</label>
+        <textarea id="r-title" rows="2"></textarea>
+        <div class="actions">
+            <button class="btn" onclick="translateCurrent()">🌐 翻訳</button>
+            <button class="btn copy" onclick="copyField('r-title', this)">日本語をコピー</button>
+        </div>
+
+        <div class="label-row">
+            <label>出品タイトル</label>
+            <span class="count" id="r-listing-count"></span>
+        </div>
+        <textarea id="r-listing" rows="3" oninput="updateCount()"></textarea>
+        <div class="actions">
+            <button class="btn copy" onclick="copyField('r-listing', this)">📋 タイトルをコピー</button>
+        </div>
+
+        <label>説明文</label>
+        <textarea id="r-description" rows="7"></textarea>
+        <div class="actions">
+            <button class="btn copy" onclick="copyField('r-description', this)">📋 説明文をコピー</button>
+        </div>
+    </div>
+
+    <div class="box">
+        <details id="glossary-box">
+            <summary>📖 用語集（作品名・キャラ名の訳を固定する）</summary>
+            <p class="sub" style="text-align:left;margin-top:8px">
+                翻訳で作品名やキャラ名がおかしいときは、ここに正しい訳を登録してください。次から自動で置き換わります。
+            </p>
+            <div class="row">
+                <input id="term-ja" placeholder="日本語（例: フリーレン）">
+            </div>
+            <div class="row" style="margin-top:6px">
+                <input id="term-to" placeholder="訳語（例: Frieren）">
+                <button class="btn" onclick="addTerm()">登録</button>
+            </div>
+            <div id="term-list" style="margin-top:8px"></div>
+        </details>
+    </div>
+
+    <div class="box">
+        <div class="label-row">
+            <strong style="font-size:14px">最近の読み取り</strong>
+            <button class="btn sub" onclick="clearHistory()">消去</button>
+        </div>
+        <div id="history"></div>
+    </div>
+</div>
+
+<script>
+    const TARGET_KEY = "listing_scanner_target";
+    const HISTORY_KEY = "listing_scanner_history";
+    const HISTORY_MAX = 30;
+    const TITLE_MAX = 120;
+
+    let html5QrCode = null;
+    let isScanning = false;
+    let lastScannedCode = "";
+    let lastScanTime = 0;
+    let current = null;
+
+    function lsGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+    function lsSet(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+
+    function escapeHtml(s) {
+        return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function setMsg(text, ok = false) {
+        const el = document.getElementById("msg");
+        el.innerText = text;
+        el.classList.toggle("ok", ok);
+    }
+
+    function target() {
+        return document.getElementById("target-select").value || "en";
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+        const select = document.getElementById("target-select");
+        try {
+            const res = await fetch("/api/targets");
+            const data = await res.json();
+            for (const [code, name] of Object.entries(data.targets)) {
+                const opt = document.createElement("option");
+                opt.value = code;
+                opt.textContent = "翻訳先: " + name;
+                select.appendChild(opt);
+            }
+        } catch (e) {
+            select.innerHTML = '<option value="en">翻訳先: English</option>';
+        }
+        select.value = lsGet(TARGET_KEY) || "en";
+        if (!select.value) select.value = "en";
+        renderHistory();
+        loadTerms();
+    });
+
+    window.changeTarget = function() {
+        lsSet(TARGET_KEY, target());
+        loadTerms();
+        if (current) translateCurrent();
+    }
+
+    window.toggleScanner = function() {
+        const container = document.getElementById("reader-container");
+        const btn = document.getElementById("scan-toggle-btn");
+        const reset = () => {
+            container.style.display = "none";
+            btn.innerText = "📷 カメラを起動する";
+            btn.style.background = "#00ffcc";
+            isScanning = false;
+        };
+        if (!isScanning) {
+            container.style.display = "block";
+            btn.innerText = "⏹️ カメラを停止する";
+            btn.style.background = "#ff4444";
+            isScanning = true;
+            html5QrCode = new Html5Qrcode("interactive");
+            // 発熱対策: fps を下げて CPU 負荷を抑える
+            html5QrCode.start(
+                { facingMode: "environment" },
+                { fps: 5, qrbox: { width: 250, height: 100 } },
+                onScanSuccess,
+                () => {}
+            ).catch(err => {
+                setMsg("カメラ起動エラー: " + err);
+                reset();
+            });
+        } else if (html5QrCode) {
+            html5QrCode.stop().then(reset).catch(reset);
+        }
+    }
+
+    async function onScanSuccess(decodedText) {
+        const now = Date.now();
+        if (decodedText === lastScannedCode && (now - lastScanTime) < 3000) return;
+        if ((now - lastScanTime) < 1200) return;
+        lastScannedCode = decodedText;
+        lastScanTime = now;
+        if (html5QrCode && isScanning) html5QrCode.pause();
+        try {
+            await lookupJan(decodedText);
+        } finally {
+            if (html5QrCode && isScanning) {
+                try { html5QrCode.resume(); } catch (e) {}
+            }
+        }
+    }
+
+    window.submitJan = async function() {
+        const input = document.getElementById("jan-input");
+        const code = input.value.trim();
+        if (!code) return;
+        input.value = "";
+        await lookupJan(code);
+    }
+
+    async function lookupJan(code) {
+        setMsg("照合中...", true);
+        try {
+            const res = await fetch("/api/lookup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jan: code })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 404) {
+                // 見つからなくても、商品名を手で入れれば翻訳できるようにする
+                showResult({ jan: data.jan || code, title: "", image_url: "", brand: "" });
+                setMsg("商品名が見つかりませんでした。日本語の商品名を入力して「翻訳」を押してください。");
+                document.getElementById("r-title").focus();
+                return;
+            }
+            if (!res.ok) {
+                setMsg(data.detail || "読み取れないコードです: " + code);
+                return;
+            }
+            if (navigator.vibrate) navigator.vibrate(50);
+            showResult(data);
+            await translateCurrent();
+        } catch (e) {
+            setMsg("通信エラー");
+        }
+    }
+
+    function showResult(data) {
+        current = { jan: data.jan, title: data.title, image_url: data.image_url, brand: data.brand };
+        document.getElementById("result").style.display = "block";
+        document.getElementById("r-jan").innerText = data.jan;
+        const img = document.getElementById("r-image");
+        img.style.display = data.image_url ? "block" : "none";
+        img.src = data.image_url || "";
+        const brand = document.getElementById("r-brand");
+        brand.style.display = data.brand ? "inline-block" : "none";
+        brand.innerText = data.brand || "";
+        document.getElementById("r-title").value = data.title || "";
+        document.getElementById("r-listing").value = "";
+        document.getElementById("r-description").value = "";
+        updateCount();
+    }
+
+    window.translateCurrent = async function() {
+        if (!current) return;
+        const title = document.getElementById("r-title").value.trim();
+        if (!title) {
+            setMsg("日本語の商品名を入力してください。");
+            return;
+        }
+        setMsg("翻訳中...", true);
+        try {
+            const res = await fetch("/api/translate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title, target: target(), jan: current.jan })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setMsg(data.detail || "翻訳に失敗しました");
+                return;
+            }
+            current.title = title;
+            current.listing = data.listing_title;
+            document.getElementById("r-listing").value = data.listing_title;
+            document.getElementById("r-description").value = data.description;
+            const brand = document.getElementById("r-brand");
+            brand.style.display = data.brand ? "inline-block" : "none";
+            brand.innerText = data.brand || "";
+            updateCount();
+            addHistory(current);
+            setMsg("");
+        } catch (e) {
+            setMsg("通信エラー");
+        }
+    }
+
+    window.updateCount = function() {
+        const len = document.getElementById("r-listing").value.length;
+        const el = document.getElementById("r-listing-count");
+        el.innerText = len ? `${len} / ${TITLE_MAX}文字` : "";
+        el.classList.toggle("over", len > TITLE_MAX);
+    }
+
+    window.copyField = async function(id, btn) {
+        const text = document.getElementById(id).value;
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {
+            // http 接続などでクリップボード API が使えないときの代わり
+            const el = document.getElementById(id);
+            el.select();
+            document.execCommand("copy");
+        }
+        const label = btn.innerText;
+        btn.innerText = "✅ コピーしました";
+        btn.classList.add("done");
+        setTimeout(() => { btn.innerText = label; btn.classList.remove("done"); }, 1500);
+    }
+
+    function loadHistory() {
+        try { return JSON.parse(lsGet(HISTORY_KEY) || "[]"); } catch (e) { return []; }
+    }
+
+    function addHistory(item) {
+        const list = loadHistory().filter(h => !(h.jan === item.jan && h.target === target()));
+        list.unshift({ jan: item.jan, title: item.title, image_url: item.image_url, brand: item.brand,
+                       listing: item.listing, target: target() });
+        lsSet(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+        renderHistory();
+    }
+
+    function renderHistory() {
+        const list = loadHistory();
+        const box = document.getElementById("history");
+        if (!list.length) {
+            box.innerHTML = '<p class="sub" style="text-align:left;margin:8px 0 0">まだありません</p>';
+            return;
+        }
+        box.innerHTML = list.map((h, i) => `
+            <div class="history-row" onclick="openHistory(${i})">
+                <div class="t">${escapeHtml(h.listing || h.title)}<small>${escapeHtml(h.title)} / ${escapeHtml(h.jan)}</small></div>
+                <button class="btn copy" onclick="event.stopPropagation(); copyText(${i}, this)">コピー</button>
+            </div>`).join("");
+    }
+
+    window.openHistory = function(i) {
+        const h = loadHistory()[i];
+        if (!h) return;
+        document.getElementById("target-select").value = h.target || "en";
+        lsSet(TARGET_KEY, target());
+        showResult(h);
+        translateCurrent();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    window.copyText = async function(i, btn) {
+        const h = loadHistory()[i];
+        if (!h || !h.listing) return;
+        try { await navigator.clipboard.writeText(h.listing); } catch (e) { return; }
+        btn.innerText = "✅";
+        setTimeout(() => { btn.innerText = "コピー"; }, 1500);
+    }
+
+    window.clearHistory = function() {
+        if (!loadHistory().length) return;
+        if (confirm("最近の読み取りをすべて消去しますか？")) {
+            lsSet(HISTORY_KEY, "[]");
+            renderHistory();
+        }
+    }
+
+    async function loadTerms() {
+        try {
+            const res = await fetch("/api/glossary?target=" + encodeURIComponent(target()));
+            const data = await res.json();
+            const box = document.getElementById("term-list");
+            box.innerHTML = data.terms.length
+                ? data.terms.map(t => `
+                    <div class="term"><span>${escapeHtml(t.ja)} → ${escapeHtml(t.term)}</span>
+                    <button data-ja="${escapeHtml(t.ja)}" onclick="removeTerm(this.dataset.ja)">削除</button></div>`).join("")
+                : '<p class="sub" style="text-align:left;margin:0">登録した用語はまだありません</p>';
+        } catch (e) {}
+    }
+
+    window.addTerm = async function() {
+        const ja = document.getElementById("term-ja").value.trim();
+        const term = document.getElementById("term-to").value.trim();
+        if (!ja || !term) return;
+        const res = await fetch("/api/glossary", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ja, term, target: target() })
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            setMsg(data.detail || "登録できませんでした");
+            return;
+        }
+        document.getElementById("term-ja").value = "";
+        document.getElementById("term-to").value = "";
+        await loadTerms();
+        if (current) translateCurrent();
+    }
+
+    window.removeTerm = async function(ja) {
+        await fetch("/api/glossary/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ja, target: target() })
+        });
+        await loadTerms();
+        if (current) translateCurrent();
+    }
+</script>
+</body>
+</html>
