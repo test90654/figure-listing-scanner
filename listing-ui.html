@@ -98,6 +98,11 @@
         <div class="actions">
             <button class="btn copy" onclick="copyField('r-listing', this)">📋 タイトルをコピー</button>
         </div>
+        <label>Shopee の相場を見る（安い順で開きます）</label>
+        <div class="actions">
+            <button class="btn sub" onclick="openMarket('translated')">🔎 訳した名前で検索</button>
+            <button class="btn sub" onclick="openMarket('ja')">🔎 日本語名で検索</button>
+        </div>
 
         <label>説明文</label>
         <textarea id="r-description" rows="7"></textarea>
@@ -154,6 +159,23 @@
     const HISTORY_KEY = "listing_scanner_history";
     const HISTORY_MAX = 30;
     const TITLE_MAX = 120;
+    // 翻訳先の言語ごとに、その国の Shopee で検索する
+    const SHOPEE_SITES = { "en": "https://shopee.sg", "zh-TW": "https://shopee.tw", "th": "https://shopee.co.th" };
+    // 長い商品名のままだと検索結果が0件になりやすいので、先頭の数語だけで探す
+    const MARKET_WORDS = 6;
+
+    window.openMarket = function(kind) {
+        if (!current) return;
+        const name = kind === "ja" ? document.getElementById("r-title").value : (current.translated || "");
+        const words = name.replace(/["“”「」『』〜～~【】()（）:：]/g, " ").split(/\s+/).filter(Boolean);
+        if (!words.length) {
+            setMsg("先に「翻訳」を押してください。");
+            return;
+        }
+        const site = SHOPEE_SITES[target()] || SHOPEE_SITES.en;
+        const keyword = words.slice(0, MARKET_WORDS).join(" ");
+        window.open(`${site}/search?keyword=${encodeURIComponent(keyword)}&sortBy=price&order=asc`, "_blank", "noopener");
+    }
 
     let html5QrCode = null;
     let isScanning = false;
@@ -439,6 +461,7 @@
             }
             current.title = title;
             current.listing = data.listing_title;
+            current.translated = data.translated;
             document.getElementById("r-listing").value = data.listing_title;
             document.getElementById("r-description").value = data.description;
             const brand = document.getElementById("r-brand");
