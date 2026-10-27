@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: figure-listing-scanner
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    envVars:
+      # 元の在庫アプリと同じサービスアカウントのJSON（スプレッドシートの商品名を読むときだけ必要）
+      - key: GCP_CREDENTIALS_JSON
+        sync: false
+      # DeepL の API キー（任意。無ければ Google 翻訳を使う）
+      - key: DEEPL_API_KEY
+        sync: false
