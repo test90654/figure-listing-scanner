@@ -338,6 +338,15 @@ def get_targets():
   return {"targets": TARGETS}
 
 
+@app.get("/shopee-autofill.user.js")
+def get_userscript():
+  # Tampermonkey は「.user.js」で終わる URL を開くと、そのままインストール画面になる
+  return FileResponse(
+      os.path.join(base_dir, "shopee-autofill.user.js"),
+      media_type="text/javascript",
+  )
+
+
 @app.get("/")
 def get_page():
   return FileResponse(

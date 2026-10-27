@@ -42,6 +42,8 @@
         .size { font-size: 12px; color: #ccc; margin-top: 4px; }
         .size b { color: #ffd166; font-size: 14px; }
         .size a { color: #9fd0ff; font-size: 11px; display: block; overflow-wrap: anywhere; }
+        .grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; font-size: 12px; color: #ccc; }
+        .grid .row input { width: 0; }
         label.file-btn { display: inline-block; margin: 0; color: #fff; font-size: 13px; cursor: pointer; }
         label.check { display: flex; gap: 6px; align-items: center; color: #ccc; font-size: 12px; }
         label.check input { flex-grow: 0; }
@@ -110,6 +112,21 @@
             <button class="btn copy" onclick="copyField('r-description', this)">📋 説明文をコピー</button>
         </div>
 
+        <label>Shopee 出品データ（前回の値を覚えます）</label>
+        <div class="grid">
+            <span>価格 ($)</span><input id="s-price" inputmode="decimal" placeholder="32.90">
+            <span>在庫</span><input id="s-stock" inputmode="numeric" placeholder="1">
+            <span>重さ (kg)</span><input id="s-weight" inputmode="decimal" placeholder="0.8">
+            <span>梱包 幅×長さ×高さ (cm)</span>
+            <div class="row"><input id="s-w" inputmode="numeric" placeholder="幅"><input id="s-l" inputmode="numeric" placeholder="長さ"><input id="s-h" inputmode="numeric" placeholder="高さ"></div>
+        </div>
+        <div class="actions">
+            <button class="btn copy" onclick="copyShopeeData(this)">🛒 Shopee用にまとめてコピー</button>
+        </div>
+        <p class="sub" style="text-align:left;margin:4px 0 0">
+            PC の Seller Centre で <a href="/shopee-autofill.user.js" style="color:#9fd0ff">自動入力スクリプト</a>（Tampermonkey）を使うと、コピーした内容をそのまま入力できます。
+        </p>
+
         <label>出品写真（Shopee の上限 2MB 以下の JPEG に自動で縮小します）</label>
         <div class="actions">
             <label class="btn file-btn">📷 撮影
@@ -163,6 +180,55 @@
     const SHOPEE_SITES = { "en": "https://shopee.sg", "zh-TW": "https://shopee.tw", "th": "https://shopee.co.th" };
     // 長い商品名のままだと検索結果が0件になりやすいので、先頭の数語だけで探す
     const MARKET_WORDS = 6;
+
+    // ---- PC の自動入力スクリプトに渡すデータ ----
+    const SHOPEE_FIELDS = ["s-price", "s-stock", "s-weight", "s-w", "s-l", "s-h"];
+    const SHOPEE_FIELDS_KEY = "listing_scanner_shopee_fields";
+
+    window.addEventListener("DOMContentLoaded", () => {
+        let saved = {};
+        try { saved = JSON.parse(lsGet(SHOPEE_FIELDS_KEY) || "{}"); } catch (e) {}
+        for (const id of SHOPEE_FIELDS) {
+            const el = document.getElementById(id);
+            el.value = saved[id] || "";
+            // 同じシリーズは重さや箱の大きさが同じなので、前回の値を残しておく
+            el.addEventListener("change", () => {
+                const values = {};
+                for (const key of SHOPEE_FIELDS) values[key] = document.getElementById(key).value.trim();
+                lsSet(SHOPEE_FIELDS_KEY, JSON.stringify(values));
+            });
+        }
+    });
+
+    window.copyShopeeData = async function(btn) {
+        if (!current) return;
+        const name = document.getElementById("r-listing").value.trim();
+        if (!name) {
+            setMsg("先に「翻訳」を押してください。");
+            return;
+        }
+        const v = id => document.getElementById(id).value.trim();
+        const data = {
+            type: "figure-listing-scanner",
+            jan: current.jan,
+            name,
+            description: document.getElementById("r-description").value.trim(),
+            brand: document.getElementById("r-brand").innerText.trim(),
+            price: v("s-price"),
+            stock: v("s-stock") || "1",
+            weight: v("s-weight"),
+            parcel: [v("s-w"), v("s-l"), v("s-h")],
+        };
+        try {
+            await navigator.clipboard.writeText(JSON.stringify(data));
+        } catch (e) {
+            prompt("コピーできなかったので、これを選んでコピーしてください", JSON.stringify(data));
+            return;
+        }
+        const label = btn.innerText;
+        btn.innerText = "✅ コピーしました";
+        setTimeout(() => { btn.innerText = label; }, 1500);
+    }
 
     window.openMarket = function(kind) {
         if (!current) return;
