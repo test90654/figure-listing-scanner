@@ -39,6 +39,14 @@
         .history-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #2c2c2c; font-size: 12px; cursor: pointer; }
         .history-row .t { flex-grow: 1; min-width: 0; overflow-wrap: anywhere; }
         .history-row .t small { color: #888; display: block; }
+        label.file-btn { display: inline-block; margin: 0; color: #fff; font-size: 13px; cursor: pointer; }
+        label.check { display: flex; gap: 6px; align-items: center; color: #ccc; font-size: 12px; }
+        label.check input { flex-grow: 0; }
+        .photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+        .photo { position: relative; background: #fff; border-radius: 6px; overflow: hidden; }
+        .photo img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; }
+        .photo small { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.65); color: #fff; font-size: 10px; text-align: center; }
+        .photo button { position: absolute; top: 2px; right: 2px; background: #cc3333; color: #fff; border: none; border-radius: 4px; font-size: 11px; padding: 1px 6px; }
     </style>
 </head>
 <body>
@@ -91,6 +99,23 @@
         <textarea id="r-description" rows="7"></textarea>
         <div class="actions">
             <button class="btn copy" onclick="copyField('r-description', this)">📋 説明文をコピー</button>
+        </div>
+
+        <label>出品写真（Shopee の上限 2MB 以下の JPEG に自動で縮小します）</label>
+        <div class="actions">
+            <label class="btn file-btn">📷 撮影
+                <input type="file" accept="image/*" capture="environment" onchange="addPhotos(this)" hidden>
+            </label>
+            <label class="btn file-btn">🖼️ 写真を選ぶ
+                <input type="file" accept="image/*" multiple onchange="addPhotos(this)" hidden>
+            </label>
+        </div>
+        <label class="check"><input type="checkbox" id="photo-square" checked> 正方形にする（白い余白を足す）</label>
+        <div id="photo-list" class="photos"></div>
+        <div class="actions" id="photo-actions" style="display:none">
+            <button class="btn copy" onclick="savePhotos()">📥 まとめて保存</button>
+            <button class="btn copy" id="photo-share" onclick="sharePhotos()" style="display:none">📤 共有・ギャラリーへ</button>
+            <button class="btn sub" onclick="clearPhotos()">写真を消す</button>
         </div>
     </div>
 
@@ -271,6 +296,120 @@
         document.getElementById("r-listing").value = "";
         document.getElementById("r-description").value = "";
         updateCount();
+        if (!current.jan || current.jan !== photoJan) clearPhotos();
+    }
+
+    // ---- 出品写真: ブラウザ内で縮小して保存する（サーバーには送らない） ----
+    // Shopee の画像上限は 2MB。ぎりぎりだと弾かれることがあるので少し余裕を持たせる
+    const PHOTO_MAX_BYTES = 1.9 * 1024 * 1024;
+    const PHOTO_SIDES = [1600, 1280, 1000];
+    const PHOTO_QUALITIES = [0.9, 0.82, 0.74, 0.66];
+    let photos = [];
+    let photoJan = "";
+
+    async function resizePhoto(file, square) {
+        const url = URL.createObjectURL(file);
+        try {
+            const img = new Image();
+            img.src = url;
+            await img.decode();
+            const srcW = img.naturalWidth, srcH = img.naturalHeight;
+            // 大きいほど画質が良いので、収まるまで画質→サイズの順に下げる
+            for (const side of PHOTO_SIDES) {
+                const scale = Math.min(1, side / Math.max(srcW, srcH));
+                const w = Math.round(srcW * scale), h = Math.round(srcH * scale);
+                const canvas = document.createElement("canvas");
+                canvas.width = square ? Math.max(w, h) : w;
+                canvas.height = square ? Math.max(w, h) : h;
+                const ctx = canvas.getContext("2d");
+                ctx.fillStyle = "#fff";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+                for (const q of PHOTO_QUALITIES) {
+                    const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", q));
+                    if (blob && blob.size <= PHOTO_MAX_BYTES) {
+                        return { blob, width: canvas.width, height: canvas.height };
+                    }
+                }
+            }
+            throw new Error("2MB 以下にできませんでした");
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    window.addPhotos = async function(input) {
+        const files = Array.from(input.files || []);
+        input.value = "";
+        if (!files.length) return;
+        const square = document.getElementById("photo-square").checked;
+        setMsg(`写真を縮小中... (${files.length}枚)`, true);
+        let failed = 0;
+        for (const file of files) {
+            try {
+                const r = await resizePhoto(file, square);
+                photos.push({ ...r, url: URL.createObjectURL(r.blob) });
+            } catch (e) {
+                failed++;
+            }
+        }
+        photoJan = current ? current.jan : "";
+        renderPhotos();
+        setMsg(failed ? `${failed}枚は読み込めませんでした（対応していない形式の可能性があります）` : "", !failed);
+    }
+
+    function photoName(i) {
+        return `${photoJan || "photo"}_${i + 1}.jpg`;
+    }
+
+    function renderPhotos() {
+        document.getElementById("photo-list").innerHTML = photos.map((p, i) => `
+            <div class="photo">
+                <img src="${p.url}" alt="">
+                <small>${(p.blob.size / 1024 / 1024).toFixed(2)}MB ${p.width}×${p.height}</small>
+                <button onclick="removePhoto(${i})">✕</button>
+            </div>`).join("");
+        document.getElementById("photo-actions").style.display = photos.length ? "flex" : "none";
+        // スマホでは共有メニューから「画像を保存」でギャラリーに入れられる
+        document.getElementById("photo-share").style.display =
+            photos.length && navigator.canShare && navigator.canShare({ files: photoFiles() }) ? "inline-block" : "none";
+    }
+
+    function photoFiles() {
+        return photos.map((p, i) => new File([p.blob], photoName(i), { type: "image/jpeg" }));
+    }
+
+    window.removePhoto = function(i) {
+        URL.revokeObjectURL(photos[i].url);
+        photos.splice(i, 1);
+        renderPhotos();
+    }
+
+    window.clearPhotos = function() {
+        photos.forEach(p => URL.revokeObjectURL(p.url));
+        photos = [];
+        renderPhotos();
+    }
+
+    window.savePhotos = async function() {
+        for (let i = 0; i < photos.length; i++) {
+            const a = document.createElement("a");
+            a.href = photos[i].url;
+            a.download = photoName(i);
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            // 連続ダウンロードがブラウザに止められないよう少し間をあける
+            await new Promise(r => setTimeout(r, 300));
+        }
+    }
+
+    window.sharePhotos = async function() {
+        try {
+            await navigator.share({ files: photoFiles() });
+        } catch (e) {
+            if (e.name !== "AbortError") setMsg("共有できませんでした。「まとめて保存」を使ってください。");
+        }
     }
 
     window.translateCurrent = async function() {
