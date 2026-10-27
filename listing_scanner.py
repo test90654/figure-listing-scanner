@@ -12,11 +12,12 @@ import sqlite3
 import time
 import traceback
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 import requests
 
+from listing_queue import ListingQueue, SheetStore, SqliteStore
 from size_finder import SizeFinder
 from translator import TARGETS, Translator, listing_description, listing_title
 
@@ -110,23 +111,27 @@ def find_item(jan: str):
   return None
 
 
+def open_spreadsheet():
+  import gspread
+  from oauth2client.service_account import ServiceAccountCredentials
+
+  scope = [
+      "https://spreadsheets.google.com/feeds",
+      "https://www.googleapis.com/auth/drive",
+  ]
+  creds = ServiceAccountCredentials.from_json_keyfile_name(credential_path, scope)
+  client = gspread.authorize(creds)
+  client.set_timeout(30)
+  return client.open_by_key(SPREADSHEET_ID)
+
+
 def sync_sheet_to_local():
-  """元の在庫アプリのスプレッドシートから JAN と商品名だけを読む（書き込みはしない）"""
+  """元の在庫アプリのスプレッドシートから JAN と商品名だけを読む（在庫のシートには書き込まない）"""
   if not os.path.exists(credential_path):
     print("credentials.json が無いため、スプレッドシートの商品名は読み込みません。")
     return
   try:
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(credential_path, scope)
-    client = gspread.authorize(creds)
-    client.set_timeout(30)
-    rows = client.open_by_key(SPREADSHEET_ID).sheet1.get_all_values()
+    rows = open_spreadsheet().sheet1.get_all_values()
 
     count = 0
     with sqlite3.connect(db_path) as conn:
@@ -252,6 +257,21 @@ class SizeRequest(BaseModel):
   jan: str = ""
 
 
+class QueueRequest(BaseModel):
+  jan: str = ""
+  name: str
+  description: str = ""
+  brand: str = ""
+  price: str = ""
+  stock: str = "1"
+  weight: str = ""
+  parcel: list = []
+
+
+class QueueDoneRequest(BaseModel):
+  id: str
+
+
 class TermRequest(BaseModel):
   ja: str
   term: str = ""
@@ -311,6 +331,51 @@ def find_size(data: SizeRequest):
   return size_finder.find(data.jan, data.title, detect_brand(data.title))
 
 
+listing_queue = None
+
+
+def get_listing_queue():
+  """出品待ちの保存先。スプレッドシートに繋がらなければ、このサーバーの中に保存する"""
+  global listing_queue
+  if listing_queue is None:
+    try:
+      if not os.path.exists(credential_path):
+        raise RuntimeError("credentials.json がありません")
+      listing_queue = ListingQueue(SheetStore(open_spreadsheet()), persistent=True)
+    except Exception as e:
+      print(f"出品待ちはスプレッドシートに保存できないため、サーバー内に保存します: {e}")
+      listing_queue = ListingQueue(SqliteStore(db_path), persistent=False)
+  return listing_queue
+
+
+@app.post("/api/queue")
+def add_to_queue(data: QueueRequest):
+  """スマホでスキャンした商品を、PC で出品するまで預かる"""
+  if not data.name.strip():
+    raise HTTPException(status_code=400, detail="出品タイトルが空です")
+  parcel = [str(v) for v in data.parcel] + ["", "", ""]
+  queue = get_listing_queue()
+  item = queue.add({
+      "jan": data.jan, "name": data.name, "description": data.description,
+      "brand": data.brand, "price": data.price, "stock": data.stock or "1",
+      "weight": data.weight, "w": parcel[0], "l": parcel[1], "h": parcel[2],
+  })
+  return {"id": item["id"], "persistent": queue.persistent}
+
+
+@app.get("/api/queue")
+def list_queue():
+  queue = get_listing_queue()
+  return {"items": queue.pending(), "persistent": queue.persistent}
+
+
+@app.post("/api/queue/done")
+def mark_queue_done(data: QueueDoneRequest):
+  if not get_listing_queue().mark_done(data.id):
+    raise HTTPException(status_code=404, detail="出品待ちに見つかりません")
+  return {"status": "ok"}
+
+
 @app.get("/api/glossary")
 def get_glossary(target: str = "en"):
   return {"target": target, "terms": translator.user_glossary(target)}
@@ -339,12 +404,16 @@ def get_targets():
 
 
 @app.get("/shopee-autofill.user.js")
-def get_userscript():
-  # Tampermonkey は「.user.js」で終わる URL を開くと、そのままインストール画面になる
-  return FileResponse(
-      os.path.join(base_dir, "shopee-autofill.user.js"),
-      media_type="text/javascript",
-  )
+def get_userscript(request: Request):
+  # Tampermonkey は「.user.js」で終わる URL を開くと、そのままインストール画面になる。
+  # スクリプトがこのサーバーの出品待ちを読めるよう、このサーバーの URL を書き込んで配る
+  host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+  scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+  with open(os.path.join(base_dir, "shopee-autofill.user.js"), encoding="utf-8") as f:
+    script = f.read()
+  script = script.replace("__SCANNER_URL__", f"{scheme}://{host}")
+  script = script.replace("__SCANNER_HOST__", host.split(":")[0])
+  return Response(content=script, media_type="text/javascript; charset=utf-8")
 
 
 @app.get("/")

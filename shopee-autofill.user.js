@@ -1,19 +1,21 @@
 // ==UserScript==
 // @name         Shopee 出品の自動入力（出品名スキャナー）
 // @namespace    https://github.com/test90654/figure-listing-scanner
-// @version      1.0.0
-// @description  出品名スキャナーでコピーした商品データを、Shopee Seller Centre の商品追加画面に入力する
+// @version      1.1.0
+// @description  出品名スキャナーの「出品待ち」に送った商品を、Shopee Seller Centre の商品追加画面に入力する
 // @match        https://seller.shopee.sg/portal/product/*
 // @match        https://seller.shopee.tw/portal/product/*
 // @match        https://seller.shopee.co.th/portal/product/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      __SCANNER_HOST__
 // ==/UserScript==
 
 // 入力するだけで、保存や公開のボタンは押さない。内容を確かめてから自分で公開する。
 (function () {
     "use strict";
 
-    const DATA_TYPE = "figure-listing-scanner";
+    // このスクリプトを配ったスキャナーのサーバー（配るときにサーバーが書き込む）
+    const SCANNER_URL = "__SCANNER_URL__";
     const CATEGORY = ["Hobbies & Collections", "Collectible Items", "Anime & Manga Collectibles"];
     // Shopee の画像上限は 2MB。ぎりぎりだと弾かれることがあるので少し余裕を持たせる
     const PHOTO_MAX_BYTES = 1.9 * 1024 * 1024;
@@ -197,19 +199,30 @@
         return dt.files.length;
     }
 
-    async function readListingData() {
-        let text = "";
-        try {
-            text = await navigator.clipboard.readText();
-        } catch (e) {
-            // クリップボードの読み取りが許可されていないときは、手で貼ってもらう
-        }
-        if (!text.includes(DATA_TYPE)) {
-            text = prompt("出品名スキャナーの「Shopee用にまとめてコピー」で取ったデータを貼り付けてください") || "";
-        }
-        const data = JSON.parse(text);
-        if (data.type !== DATA_TYPE) throw new Error("出品名スキャナーのデータではありません");
-        return data;
+    // Seller Centre の画面からは他のサイトへ通信できないため、Tampermonkey の機能で通信する
+    function api(method, path, body) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method,
+                url: SCANNER_URL + path,
+                headers: { "Content-Type": "application/json" },
+                data: body ? JSON.stringify(body) : undefined,
+                timeout: 60000,
+                onload: res => {
+                    let data = {};
+                    try { data = JSON.parse(res.responseText); } catch (e) {}
+                    if (res.status >= 200 && res.status < 300) resolve(data);
+                    else reject(new Error(data.detail || `HTTP ${res.status}`));
+                },
+                onerror: () => reject(new Error("スキャナーに接続できませんでした")),
+                // 無料のサーバーは止まっていると起きるまで1分ほどかかる
+                ontimeout: () => reject(new Error("スキャナーの応答がありません。少し待ってからもう一度押してください")),
+            });
+        });
+    }
+
+    function toListing(item) {
+        return { ...item, parcel: [item.w, item.l, item.h] };
     }
 
     // ---- 画面の右下に操作パネルを出す ----
@@ -218,38 +231,82 @@
         panel.id = "fls-panel";
         panel.innerHTML = `
             <div style="font-weight:bold;margin-bottom:6px">出品名スキャナー</div>
-            <button id="fls-fill">📋 コピーした商品を入力</button>
+            <button id="fls-load">📥 出品待ちを表示</button>
+            <div id="fls-list"></div>
             <label id="fls-photo-label">🖼️ 写真を縮小して追加
                 <input id="fls-photo" type="file" accept="image/*" multiple hidden>
             </label>
             <div id="fls-status"></div>`;
         Object.assign(panel.style, {
             position: "fixed", right: "16px", bottom: "80px", zIndex: 99999, background: "#fff",
-            border: "2px solid #ee4d2d", borderRadius: "8px", padding: "10px", width: "220px",
+            border: "2px solid #ee4d2d", borderRadius: "8px", padding: "10px", width: "240px",
+            maxHeight: "70vh", overflowY: "auto",
             font: "13px sans-serif", color: "#333", boxShadow: "0 2px 10px rgba(0,0,0,.2)",
         });
-        for (const el of [panel.querySelector("#fls-fill"), panel.querySelector("#fls-photo-label")]) {
-            Object.assign(el.style, {
-                display: "block", width: "100%", boxSizing: "border-box", margin: "4px 0", padding: "8px",
-                background: "#ee4d2d", color: "#fff", border: "none", borderRadius: "6px",
-                cursor: "pointer", textAlign: "center", fontSize: "13px",
-            });
+        const buttonStyle = {
+            display: "block", width: "100%", boxSizing: "border-box", margin: "4px 0", padding: "8px",
+            background: "#ee4d2d", color: "#fff", border: "none", borderRadius: "6px",
+            cursor: "pointer", textAlign: "center", fontSize: "13px",
+        };
+        for (const el of [panel.querySelector("#fls-load"), panel.querySelector("#fls-photo-label")]) {
+            Object.assign(el.style, buttonStyle);
         }
         const status = panel.querySelector("#fls-status");
         Object.assign(status.style, { marginTop: "6px", fontSize: "12px", whiteSpace: "pre-wrap" });
+        const list = panel.querySelector("#fls-list");
 
-        panel.querySelector("#fls-fill").addEventListener("click", async () => {
-            status.textContent = "入力しています...";
+        async function showDoneButton(item) {
+            const done = document.createElement("button");
+            done.textContent = "✅ 出品できたので一覧から消す";
+            Object.assign(done.style, buttonStyle, { background: "#28a745" });
+            done.addEventListener("click", async () => {
+                try {
+                    await api("POST", "/api/queue/done", { id: item.id });
+                    done.remove();
+                    status.textContent = "出品待ちから消しました。";
+                } catch (e) {
+                    status.textContent = "消せませんでした: " + e.message;
+                }
+            });
+            status.after(done);
+        }
+
+        async function loadQueue() {
+            status.textContent = "出品待ちを読み込んでいます...";
+            list.innerHTML = "";
             try {
-                const data = await readListingData();
-                const { done, skipped } = await applyListing(data);
-                status.textContent = `入力: ${done.join("、")}` +
-                    (skipped.length ? `\n手で入れてください: ${skipped.join("、")}` : "") +
-                    "\n内容を確認してから公開してください。";
+                const data = await api("GET", "/api/queue");
+                status.textContent = data.items.length
+                    ? "入力する商品を選んでください。"
+                    : "出品待ちはありません。スマホのスキャナーで「PCの出品待ちに送る」を押してください。";
+                for (const item of data.items) {
+                    const row = document.createElement("button");
+                    row.textContent = `${item.name.slice(0, 60)}  $${item.price || "-"}`;
+                    Object.assign(row.style, {
+                        display: "block", width: "100%", textAlign: "left", margin: "4px 0", padding: "6px",
+                        background: "#fff7f5", border: "1px solid #f3c1b5", borderRadius: "6px",
+                        cursor: "pointer", fontSize: "12px",
+                    });
+                    row.addEventListener("click", async () => {
+                        status.textContent = "入力しています...";
+                        try {
+                            const { done, skipped } = await applyListing(toListing(item));
+                            status.textContent = `入力: ${done.join("、")}` +
+                                (skipped.length ? `\n手で入れてください: ${skipped.join("、")}` : "") +
+                                "\n内容を確認してから公開してください。";
+                            showDoneButton(item);
+                        } catch (e) {
+                            status.textContent = "入力できませんでした: " + e.message;
+                        }
+                    });
+                    list.appendChild(row);
+                }
             } catch (e) {
-                status.textContent = "入力できませんでした: " + e.message;
+                status.textContent = "読み込めませんでした: " + e.message;
             }
-        });
+        }
+
+        panel.querySelector("#fls-load").addEventListener("click", loadQueue);
         panel.querySelector("#fls-photo").addEventListener("change", async (event) => {
             const files = event.target.files;
             if (!files.length) return;

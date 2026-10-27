@@ -70,6 +70,30 @@ class ListingScannerTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("出品名スキャナー", res.text)
 
+    def test_queue_add_list_done(self):
+        res = self.client.post("/api/queue", json={
+            "jan": "4573102737915", "name": "Itachi Figure", "price": "37.90", "parcel": [20, 28, 16],
+        })
+        self.assertEqual(res.status_code, 200)
+        item_id = res.json()["id"]
+        items = self.client.get("/api/queue").json()["items"]
+        item = next(i for i in items if i["id"] == item_id)
+        self.assertEqual([item["w"], item["l"], item["h"]], ["20", "28", "16"])
+        self.assertEqual(item["stock"], "1")
+        self.assertEqual(self.client.post("/api/queue/done", json={"id": item_id}).status_code, 200)
+        self.assertNotIn(item_id, [i["id"] for i in self.client.get("/api/queue").json()["items"]])
+
+    def test_queue_rejects_empty_name(self):
+        self.assertEqual(self.client.post("/api/queue", json={"name": " "}).status_code, 400)
+
+    def test_userscript_points_back_to_this_server(self):
+        res = self.client.get("/shopee-autofill.user.js", headers={
+            "x-forwarded-proto": "https", "x-forwarded-host": "scanner.onrender.com",
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('const SCANNER_URL = "https://scanner.onrender.com";', res.text)
+        self.assertIn("// @connect      scanner.onrender.com", res.text)
+
 
 if __name__ == "__main__":
     unittest.main()

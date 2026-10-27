@@ -121,10 +121,10 @@
             <div class="row"><input id="s-w" inputmode="numeric" placeholder="幅"><input id="s-l" inputmode="numeric" placeholder="長さ"><input id="s-h" inputmode="numeric" placeholder="高さ"></div>
         </div>
         <div class="actions">
-            <button class="btn copy" onclick="copyShopeeData(this)">🛒 Shopee用にまとめてコピー</button>
+            <button class="btn copy" onclick="sendToQueue(this)">📤 PCの出品待ちに送る</button>
         </div>
         <p class="sub" style="text-align:left;margin:4px 0 0">
-            PC の Seller Centre で <a href="/shopee-autofill.user.js" style="color:#9fd0ff">自動入力スクリプト</a>（Tampermonkey）を使うと、コピーした内容をそのまま入力できます。
+            PC の Seller Centre で <a href="/shopee-autofill.user.js" style="color:#9fd0ff">自動入力スクリプト</a>（Tampermonkey）を使うと、出品待ちの商品をそのまま入力できます。写真は PC へ別に移してください。
         </p>
 
         <label>出品写真（Shopee の上限 2MB 以下の JPEG に自動で縮小します）</label>
@@ -200,7 +200,7 @@
         }
     });
 
-    window.copyShopeeData = async function(btn) {
+    window.sendToQueue = async function(btn) {
         if (!current) return;
         const name = document.getElementById("r-listing").value.trim();
         if (!name) {
@@ -208,26 +208,38 @@
             return;
         }
         const v = id => document.getElementById(id).value.trim();
-        const data = {
-            type: "figure-listing-scanner",
-            jan: current.jan,
-            name,
-            description: document.getElementById("r-description").value.trim(),
-            brand: document.getElementById("r-brand").innerText.trim(),
-            price: v("s-price"),
-            stock: v("s-stock") || "1",
-            weight: v("s-weight"),
-            parcel: [v("s-w"), v("s-l"), v("s-h")],
-        };
+        btn.disabled = true;
         try {
-            await navigator.clipboard.writeText(JSON.stringify(data));
+            const res = await fetch("/api/queue", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    jan: current.jan,
+                    name,
+                    description: document.getElementById("r-description").value.trim(),
+                    brand: document.getElementById("r-brand").innerText.trim(),
+                    price: v("s-price"),
+                    stock: v("s-stock") || "1",
+                    weight: v("s-weight"),
+                    parcel: [v("s-w"), v("s-l"), v("s-h")],
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setMsg(data.detail || "送れませんでした");
+                return;
+            }
+            setMsg(data.persistent
+                ? "PCの出品待ちに送りました。"
+                : "PCの出品待ちに送りました（スプレッドシートに繋がっていないため、サーバーが止まると消えます）", true);
+            const label = btn.innerText;
+            btn.innerText = "✅ 送りました";
+            setTimeout(() => { btn.innerText = label; }, 1500);
         } catch (e) {
-            prompt("コピーできなかったので、これを選んでコピーしてください", JSON.stringify(data));
-            return;
+            setMsg("通信エラー");
+        } finally {
+            btn.disabled = false;
         }
-        const label = btn.innerText;
-        btn.innerText = "✅ コピーしました";
-        setTimeout(() => { btn.innerText = label; }, 1500);
     }
 
     window.openMarket = function(kind) {
