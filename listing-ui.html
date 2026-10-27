@@ -39,6 +39,9 @@
         .history-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #2c2c2c; font-size: 12px; cursor: pointer; }
         .history-row .t { flex-grow: 1; min-width: 0; overflow-wrap: anywhere; }
         .history-row .t small { color: #888; display: block; }
+        .size { font-size: 12px; color: #ccc; margin-top: 4px; }
+        .size b { color: #ffd166; font-size: 14px; }
+        .size a { color: #9fd0ff; font-size: 11px; display: block; overflow-wrap: anywhere; }
         label.file-btn { display: inline-block; margin: 0; color: #fff; font-size: 13px; cursor: pointer; }
         label.check { display: flex; gap: 6px; align-items: center; color: #ccc; font-size: 12px; }
         label.check input { flex-grow: 0; }
@@ -76,6 +79,7 @@
             <div>
                 <div class="jan">JAN: <span id="r-jan"></span></div>
                 <span class="brand" id="r-brand" style="display:none"></span>
+                <div class="size" id="r-size"></div>
             </div>
         </div>
 
@@ -293,6 +297,8 @@
         brand.style.display = data.brand ? "inline-block" : "none";
         brand.innerText = data.brand || "";
         document.getElementById("r-title").value = data.title || "";
+        document.getElementById("r-size").innerHTML = "";
+        sizeRequest++;
         document.getElementById("r-listing").value = "";
         document.getElementById("r-description").value = "";
         updateCount();
@@ -441,8 +447,36 @@
             updateCount();
             addHistory(current);
             setMsg("");
+            loadSize(current);
         } catch (e) {
             setMsg("通信エラー");
+        }
+    }
+
+    // メーカー公式サイトでサイズを調べる。別の商品を拾うこともあるので出典も出す
+    let sizeRequest = 0;
+    async function loadSize(item) {
+        const box = document.getElementById("r-size");
+        const req = ++sizeRequest;
+        if (item.sizeFor === item.title) return;
+        box.innerHTML = "サイズを調べています...";
+        try {
+            const res = await fetch("/api/size", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: item.title, jan: item.jan })
+            });
+            const data = await res.json();
+            if (req !== sizeRequest) return;
+            item.sizeFor = item.title;
+            const source = data.url
+                ? `<a href="${escapeHtml(data.url)}" target="_blank" rel="noopener">出典: ${escapeHtml(data.title || data.url)}</a>`
+                : "";
+            box.innerHTML = data.size
+                ? `サイズ: <b>${escapeHtml(data.size)}</b>${source}`
+                : `サイズは見つかりませんでした${source}`;
+        } catch (e) {
+            if (req === sizeRequest) box.innerHTML = "サイズを調べられませんでした";
         }
     }
 

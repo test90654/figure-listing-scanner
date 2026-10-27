@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import requests
 
+from size_finder import SizeFinder
 from translator import TARGETS, Translator, listing_description, listing_title
 
 app = FastAPI(title="Figure Listing Scanner")
@@ -39,6 +40,7 @@ translator = Translator(
     os.path.join(base_dir, "glossary.json"),
     deepl_key=os.environ.get("DEEPL_API_KEY", ""),
 )
+size_finder = SizeFinder(db_path)
 
 
 # ==========================================
@@ -245,6 +247,11 @@ class TranslateRequest(BaseModel):
   jan: str = ""
 
 
+class SizeRequest(BaseModel):
+  title: str
+  jan: str = ""
+
+
 class TermRequest(BaseModel):
   ja: str
   term: str = ""
@@ -294,6 +301,14 @@ def translate(data: TranslateRequest):
       "description": listing_description(title, brand, data.jan, data.target),
       "brand": brand,
   }
+
+
+@app.post("/api/size")
+def find_size(data: SizeRequest):
+  """メーカー公式サイトでフィギュアのサイズを調べる。出典のページも返す"""
+  if not data.title.strip():
+    raise HTTPException(status_code=400, detail="商品名が空です")
+  return size_finder.find(data.jan, data.title, detect_brand(data.title))
 
 
 @app.get("/api/glossary")
