@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopee 出品の自動入力（出品名スキャナー）
 // @namespace    https://github.com/test90654/figure-listing-scanner
-// @version      1.3.0
+// @version      1.4.0
 // @description  出品名スキャナーの「出品待ち」に送った商品を、Shopee Seller Centre の商品追加画面に入力する
 // @match        https://seller.shopee.sg/portal/product/*
 // @match        https://seller.shopee.tw/portal/product/*
@@ -39,85 +39,62 @@
         cursor: "pointer", textAlign: "center", fontSize: "13px",
     };
 
-    function median(values) {
-        const sorted = [...values].sort((a, b) => a - b);
-        const mid = Math.floor(sorted.length / 2);
-        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    // ---- Shopee の検索結果ページ: 商品ごとに価格のコピーボタンを付ける（ページを読むだけ） ----
+    // 似た名前の別商品が多いので、集計はせず、同じ商品だと目で確かめたものを選んでもらう
+    function itemPrice(link) {
+        const prices = [...link.innerText.matchAll(PRICE_RE)].map(m => parseFloat(m[1].replace(/,/g, "")));
+        // 値下げ前の価格も並ぶことがあるので、一番安い数字を売値とみなす
+        return prices.length ? Math.min(...prices) : null;
     }
 
-    // ---- Shopee の検索結果ページ: 表示されている商品の価格をまとめる（ページを読むだけ） ----
-    function readSearchResults() {
-        const seen = new Set();
-        const items = [];
+    async function copyPrice(price, button) {
+        const text = price.toFixed(2);
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {
+            const tmp = document.createElement("textarea");
+            tmp.value = text;
+            document.body.appendChild(tmp);
+            tmp.select();
+            document.execCommand("copy");
+            tmp.remove();
+        }
+        // Seller Centre の画面にも「この価格を入れる」ボタンを出す
+        GM_setValue(MARKET_KEY, { price, label: "コピーした価格", at: Date.now() });
+        button.textContent = "✅ コピーしました";
+        setTimeout(() => { button.textContent = `📋 $${text}`; }, 1500);
+    }
+
+    function addCopyButtons() {
         // 商品ページへのリンクは「-i.店舗ID.商品ID」の形
         for (const link of document.querySelectorAll('a[href*="-i."]')) {
-            const href = link.href.split("?")[0];
-            if (seen.has(href)) continue;
-            const prices = [...link.innerText.matchAll(PRICE_RE)].map(m => parseFloat(m[1].replace(/,/g, "")));
-            if (!prices.length) continue;
-            seen.add(href);
-            const img = link.querySelector("img[alt]");
-            const title = (link.innerText.split("\n").map(s => s.trim()).find(s => s.length > 15) ||
-                (img && img.alt) || "").slice(0, 80);
-            // 値下げ前の価格も並ぶことがあるので、一番安い数字を売値とみなす
-            items.push({ title, price: Math.min(...prices), url: href });
+            if (link.dataset.flsCopy) continue;
+            const price = itemPrice(link);
+            if (price === null) continue;
+            link.dataset.flsCopy = "1";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = `📋 $${price.toFixed(2)}`;
+            Object.assign(button.style, {
+                position: "absolute", top: "6px", left: "6px", zIndex: 10, padding: "4px 8px",
+                background: "#2673dd", color: "#fff", border: "none", borderRadius: "6px",
+                font: "bold 12px sans-serif", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,.3)",
+            });
+            // 商品ページへ移動しないよう、クリックをリンクに伝えない
+            button.addEventListener("click", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                copyPrice(price, button);
+            });
+            if (getComputedStyle(link).position === "static") link.style.position = "relative";
+            link.appendChild(button);
         }
-        return items;
     }
 
     function runMarketPage() {
-        const panel = document.createElement("div");
-        panel.id = "fls-market";
-        panel.innerHTML = `
-            <div style="font-weight:bold;margin-bottom:6px">出品名スキャナー: 相場</div>
-            <button id="fls-market-read">📊 表示中の価格を集計</button>
-            <div id="fls-market-summary" style="font-size:12px;margin:4px 0"></div>
-            <div id="fls-market-list"></div>`;
-        Object.assign(panel.style, panelStyle);
-        Object.assign(panel.querySelector("#fls-market-read").style, buttonStyle);
-        const summary = panel.querySelector("#fls-market-summary");
-        const list = panel.querySelector("#fls-market-list");
-
-        function choose(price, label) {
-            GM_setValue(MARKET_KEY, { price, label, keyword: new URLSearchParams(location.search).get("keyword") || "", at: Date.now() });
-            summary.textContent = `✅ $${price.toFixed(2)}（${label}）を Seller Centre に送りました。`;
-        }
-
-        function render() {
-            const items = readSearchResults().sort((a, b) => a.price - b.price);
-            list.innerHTML = "";
-            if (!items.length) {
-                summary.textContent = "価格が見つかりません。結果が表示されてからもう一度押してください。";
-                return;
-            }
-            const prices = items.map(i => i.price);
-            const low = prices[0], mid = median(prices);
-            summary.textContent = `${items.length}件 / 最安 $${low.toFixed(2)} / 中央値 $${mid.toFixed(2)}\n` +
-                "別の商品や中古も混ざるので、同じ商品を選んでください。下へスクロールすると件数が増えます。";
-            summary.style.whiteSpace = "pre-wrap";
-            for (const [label, price] of [["中央値", mid], ["最安", low]]) {
-                const b = document.createElement("button");
-                b.textContent = `${label} $${price.toFixed(2)} を使う`;
-                Object.assign(b.style, buttonStyle, { background: "#2673dd", padding: "6px" });
-                b.addEventListener("click", () => choose(price, label));
-                list.appendChild(b);
-            }
-            for (const item of items.slice(0, 15)) {
-                const row = document.createElement("div");
-                Object.assign(row.style, { borderTop: "1px solid #eee", padding: "4px 0", fontSize: "12px" });
-                row.innerHTML = `<b>$${item.price.toFixed(2)}</b> <a target="_blank"></a> <button>使う</button>`;
-                const a = row.querySelector("a");
-                a.href = item.url;
-                a.textContent = item.title || "(商品)";
-                const b = row.querySelector("button");
-                Object.assign(b.style, { fontSize: "11px", padding: "1px 6px", cursor: "pointer" });
-                b.addEventListener("click", () => choose(item.price, item.title.slice(0, 30) || "選んだ商品"));
-                list.appendChild(row);
-            }
-        }
-
-        panel.querySelector("#fls-market-read").addEventListener("click", render);
-        document.body.appendChild(panel);
+        // 検索結果は下へスクロールするたびに読み込まれるので、新しく出た商品にもボタンを付ける
+        addCopyButtons();
+        setInterval(addCopyButtons, 1500);
     }
 
     if (!location.hostname.startsWith("seller.")) {
@@ -462,7 +439,7 @@
             const site = location.hostname.replace(/^seller\./, "");
             const keyword = words.slice(0, MARKET_WORDS).join(" ");
             window.open(`https://${site}/search?keyword=${encodeURIComponent(keyword)}&sortBy=price&order=asc`, "_blank");
-            status.textContent = "開いたページで「📊 表示中の価格を集計」を押し、使う価格を選んでください。";
+            status.textContent = "開いたページで同じ商品を探し、左上の「📋 $価格」を押すとコピーされ、ここに入れるボタンが出ます。";
         });
 
         // 相場のページで選んだ価格を受け取って、価格欄に入れるボタンを出す
