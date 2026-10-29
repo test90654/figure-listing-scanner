@@ -34,7 +34,8 @@ DESCRIPTION = {
         "- 100% authentic Japanese prize figure{brand_line}\n"
         "- Brand new, unopened\n"
         "- JAN: {jan}\n"
-        "- Ships from Japan\n\n"
+        "- Ships from Japan\n"
+        "- Carefully packed: plastic bag + bubble wrap, shipped in a sturdy cardboard box\n\n"
         "Please note that prize figures may have minor box wear from factory and shipping."
     ),
     "zh-TW": (
@@ -42,7 +43,8 @@ DESCRIPTION = {
         "・日本正版景品公仔{brand_line}\n"
         "・全新未拆\n"
         "・JAN: {jan}\n"
-        "・日本出貨\n\n"
+        "・日本出貨\n"
+        "・以塑膠袋及氣泡紙仔細包裝，使用堅固紙箱寄出\n\n"
         "景品盒裝可能有出廠及運送造成的輕微壓痕，敬請見諒。"
     ),
     "th": (
@@ -50,7 +52,8 @@ DESCRIPTION = {
         "- Authentic Japanese prize figure{brand_line}\n"
         "- New, unopened\n"
         "- JAN: {jan}\n"
-        "- Ships from Japan"
+        "- Ships from Japan\n"
+        "- Carefully packed: plastic bag + bubble wrap, shipped in a sturdy cardboard box"
     ),
 }
 
