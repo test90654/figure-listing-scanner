@@ -31,6 +31,7 @@
         .head { display: flex; gap: 10px; align-items: center; }
         .thumb { width: 64px; height: 64px; object-fit: contain; background: #fff; border-radius: 6px; flex-shrink: 0; }
         .jan { color: #888; font-size: 12px; }
+        .btn.small { padding: 3px 8px; font-size: 11px; margin-left: 4px; }
         .brand { display: inline-block; background: #8e44ad; color: #fff; font-size: 11px; border-radius: 3px; padding: 1px 6px; margin-top: 4px; }
         .actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
         details summary { cursor: pointer; color: #9fd0ff; font-size: 13px; }
@@ -79,7 +80,9 @@
         <div class="head">
             <img id="r-image" class="thumb" alt="" onerror="this.style.display='none'">
             <div>
-                <div class="jan">JAN: <span id="r-jan"></span></div>
+                <div class="jan">JAN: <span id="r-jan"></span>
+                    <button class="btn copy small" onclick="copyField('r-jan', this)">📋 コピー</button>
+                </div>
                 <span class="brand" id="r-brand" style="display:none"></span>
                 <div class="size" id="r-size"></div>
             </div>
@@ -589,15 +592,20 @@
     }
 
     window.copyField = async function(id, btn) {
-        const text = document.getElementById(id).value;
+        const el = document.getElementById(id);
+        // 入力欄は value、JAN のような表示だけの欄は文字そのものをコピーする
+        const text = "value" in el ? el.value : el.innerText.trim();
         if (!text) return;
         try {
             await navigator.clipboard.writeText(text);
         } catch (e) {
             // http 接続などでクリップボード API が使えないときの代わり
-            const el = document.getElementById(id);
-            el.select();
+            const tmp = document.createElement("textarea");
+            tmp.value = text;
+            document.body.appendChild(tmp);
+            tmp.select();
             document.execCommand("copy");
+            tmp.remove();
         }
         const label = btn.innerText;
         btn.innerText = "✅ コピーしました";
