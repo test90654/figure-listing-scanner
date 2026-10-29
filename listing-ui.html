@@ -120,9 +120,12 @@
             <span>価格 ($)</span><input id="s-price" inputmode="decimal" placeholder="32.90">
             <span>在庫</span><input id="s-stock" inputmode="numeric" placeholder="1">
             <span>重さ (kg)</span><input id="s-weight" inputmode="decimal" placeholder="0.8">
+            <span>商品の箱 幅×奥行×高さ (cm)</span>
+            <div class="row"><input id="s-bw" inputmode="decimal" placeholder="幅"><input id="s-bl" inputmode="decimal" placeholder="奥行"><input id="s-bh" inputmode="decimal" placeholder="高さ"></div>
             <span>梱包 幅×長さ×高さ (cm)</span>
             <div class="row"><input id="s-w" inputmode="numeric" placeholder="幅"><input id="s-l" inputmode="numeric" placeholder="長さ"><input id="s-h" inputmode="numeric" placeholder="高さ"></div>
         </div>
+        <div class="size" id="s-box"></div>
         <div class="size" id="s-preset"></div>
         <div class="actions">
             <button class="btn copy" onclick="sendToQueue(this)">📤 PCの出品待ちに送る</button>
@@ -186,12 +189,40 @@
     const MARKET_WORDS = 6;
 
     // ---- PC の自動入力スクリプトに渡すデータ ----
-    const SHOPEE_FIELDS = ["s-price", "s-stock", "s-weight", "s-w", "s-l", "s-h"];
+    const BOX_FIELDS = ["s-bw", "s-bl", "s-bh"];
+    const SHOPEE_FIELDS = ["s-price", "s-stock", "s-weight", ...BOX_FIELDS, "s-w", "s-l", "s-h"];
     const SHOPEE_FIELDS_KEY = "listing_scanner_shopee_fields";
+
+    // ---- 商品の箱の寸法から、段ボールの大きさを出す ----
+    // プチプチを両側に巻く分と、段ボールの厚みの分を各辺に足す
+    const BOX_PADDING_CM = 3;
+    const CARDBOARD_CM = 1;
+    // 日本の宅配便のサイズ（3辺の合計）
+    const BOX_CLASSES = [40, 60, 80, 100, 120, 140, 160];
+    const VOLUMETRIC_DIVISOR = 6000;
+
+    // fillParcel が true なら、出した外寸を梱包サイズの欄に入れる
+    function calcBox(fillParcel) {
+        const out = document.getElementById("s-box");
+        const dims = BOX_FIELDS.map(id => parseFloat(document.getElementById(id).value));
+        if (!dims.every(d => d > 0)) {
+            out.innerHTML = "";
+            return;
+        }
+        const outer = dims.map(d => Math.ceil(d + BOX_PADDING_CM + CARDBOARD_CM));
+        const total = outer.reduce((a, b) => a + b, 0);
+        const boxClass = BOX_CLASSES.find(c => total <= c);
+        const volumetric = outer.reduce((a, b) => a * b, 1) / VOLUMETRIC_DIVISOR;
+        out.innerHTML = `📦 <b>${boxClass ? boxClass + "サイズ" : "160サイズ超"}</b> の段ボール` +
+            `（梱包後 約 ${outer.join("×")}cm、3辺合計 ${total}cm、容積重量 ${volumetric.toFixed(2)}kg）`;
+        if (fillParcel) {
+            ["s-w", "s-l", "s-h"].forEach((id, i) => { document.getElementById(id).value = outer[i]; });
+        }
+    }
 
     // ---- シリーズごとの重さ・梱包サイズ ----
     // 同じシリーズは箱の大きさがほぼ同じなので、一度入れた値をシリーズごとに覚えて次から自動で入れる
-    const PARCEL_FIELDS = ["s-weight", "s-w", "s-l", "s-h"];
+    const PARCEL_FIELDS = ["s-weight", ...BOX_FIELDS, "s-w", "s-l", "s-h"];
     const SERIES_SIZES_KEY = "listing_scanner_series_sizes";
     // 先に書いたものから順に探す（「SPM」より先に長い名前を見るため）
     const SERIES = [
@@ -249,6 +280,7 @@
             return;
         }
         for (const id of PARCEL_FIELDS) document.getElementById(id).value = saved[id] || "";
+        calcBox(false);
         showPreset(`シリーズ: <b>${escapeHtml(series)}</b> の重さ・梱包サイズを入れました（違うときは直すと覚え直します）`);
     }
 
@@ -271,12 +303,14 @@
             el.value = saved[id] || "";
             // シリーズが分からない商品のために、前回の値も残しておく
             el.addEventListener("change", () => {
+                if (BOX_FIELDS.includes(id)) calcBox(true);
                 const values = {};
                 for (const key of SHOPEE_FIELDS) values[key] = document.getElementById(key).value.trim();
                 lsSet(SHOPEE_FIELDS_KEY, JSON.stringify(values));
                 if (PARCEL_FIELDS.includes(id)) saveSeriesSize();
             });
         }
+        calcBox(false);
     });
 
     window.sendToQueue = async function(btn) {
