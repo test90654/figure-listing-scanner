@@ -123,6 +123,7 @@
             <span>梱包 幅×長さ×高さ (cm)</span>
             <div class="row"><input id="s-w" inputmode="numeric" placeholder="幅"><input id="s-l" inputmode="numeric" placeholder="長さ"><input id="s-h" inputmode="numeric" placeholder="高さ"></div>
         </div>
+        <div class="size" id="s-preset"></div>
         <div class="actions">
             <button class="btn copy" onclick="sendToQueue(this)">📤 PCの出品待ちに送る</button>
         </div>
@@ -188,17 +189,92 @@
     const SHOPEE_FIELDS = ["s-price", "s-stock", "s-weight", "s-w", "s-l", "s-h"];
     const SHOPEE_FIELDS_KEY = "listing_scanner_shopee_fields";
 
+    // ---- シリーズごとの重さ・梱包サイズ ----
+    // 同じシリーズは箱の大きさがほぼ同じなので、一度入れた値をシリーズごとに覚えて次から自動で入れる
+    const PARCEL_FIELDS = ["s-weight", "s-w", "s-l", "s-h"];
+    const SERIES_SIZES_KEY = "listing_scanner_series_sizes";
+    // 先に書いたものから順に探す（「SPM」より先に長い名前を見るため）
+    const SERIES = [
+        ["Luminasta", ["luminasta", "ルミナスタ"]],
+        ["Grandista", ["grandista", "グランディスタ"]],
+        ["Q posket", ["q posket", "qposket"]],
+        ["DXF", ["dxf"]],
+        ["Masterlise", ["masterlise"]],
+        ["GLITTER&GLAMOURS", ["glitter&glamours", "glitter & glamours"]],
+        ["Relax time", ["relax time"]],
+        ["VIBRATION STARS", ["vibration stars"]],
+        ["SOLID AND SOULS", ["solid and souls"]],
+        ["Fluffy Puffy", ["fluffy puffy"]],
+        ["ちょこのせ", ["ちょこのせ"]],
+        ["Tip'n'Pop", ["tip'n'pop"]],
+        ["SPM", ["spm", "スーパープレミアム"]],
+        ["プレミアムフィギュア", ["プレミアムフィギュア"]],
+        ["AMP+", ["amp+"]],
+        ["Coreful", ["coreful"]],
+        ["Aqua Float Girls", ["aqua float"]],
+        ["Desktop Cute", ["desktop cute"]],
+        ["BiCute Bunnies", ["bicute"]],
+        ["Trio-Try-iT", ["trio-try-it"]],
+        ["TENITOL", ["tenitol"]],
+        ["ぬーどるストッパー", ["ぬーどるストッパー"]],
+        ["ひっかけ", ["ひっかけ"]],
+        ["一番くじ", ["一番くじ"]],
+    ];
+
+    function detectSeries(title) {
+        const t = (title || "").toLowerCase();
+        const found = SERIES.find(([, keywords]) => keywords.some(k => t.includes(k)));
+        return found ? found[0] : "";
+    }
+
+    function loadSeriesSizes() {
+        try { return JSON.parse(lsGet(SERIES_SIZES_KEY) || "{}"); } catch (e) { return {}; }
+    }
+
+    function showPreset(text) {
+        document.getElementById("s-preset").innerHTML = text;
+    }
+
+    // スキャンした商品のシリーズの値を入れる。覚えていないシリーズは前回の値のまま
+    function applySeriesSize(title) {
+        const series = detectSeries(title);
+        if (current) current.series = series;
+        if (!series) {
+            showPreset("");
+            return;
+        }
+        const saved = loadSeriesSizes()[series];
+        if (!saved) {
+            showPreset(`シリーズ: <b>${escapeHtml(series)}</b>（重さと梱包サイズを入れると、次から自動で入ります）`);
+            return;
+        }
+        for (const id of PARCEL_FIELDS) document.getElementById(id).value = saved[id] || "";
+        showPreset(`シリーズ: <b>${escapeHtml(series)}</b> の重さ・梱包サイズを入れました（違うときは直すと覚え直します）`);
+    }
+
+    function saveSeriesSize() {
+        const series = current && current.series;
+        if (!series) return;
+        const values = {};
+        for (const id of PARCEL_FIELDS) values[id] = document.getElementById(id).value.trim();
+        if (!values["s-weight"] && !values["s-w"]) return;
+        const all = loadSeriesSizes();
+        all[series] = values;
+        lsSet(SERIES_SIZES_KEY, JSON.stringify(all));
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
         let saved = {};
         try { saved = JSON.parse(lsGet(SHOPEE_FIELDS_KEY) || "{}"); } catch (e) {}
         for (const id of SHOPEE_FIELDS) {
             const el = document.getElementById(id);
             el.value = saved[id] || "";
-            // 同じシリーズは重さや箱の大きさが同じなので、前回の値を残しておく
+            // シリーズが分からない商品のために、前回の値も残しておく
             el.addEventListener("change", () => {
                 const values = {};
                 for (const key of SHOPEE_FIELDS) values[key] = document.getElementById(key).value.trim();
                 lsSet(SHOPEE_FIELDS_KEY, JSON.stringify(values));
+                if (PARCEL_FIELDS.includes(id)) saveSeriesSize();
             });
         }
     });
@@ -405,6 +481,7 @@
         document.getElementById("r-listing").value = "";
         document.getElementById("r-description").value = "";
         updateCount();
+        applySeriesSize(data.title);
         if (!current.jan || current.jan !== photoJan) clearPhotos();
     }
 
